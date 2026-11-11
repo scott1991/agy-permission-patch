@@ -99,8 +99,10 @@ These commands use the retained Ghidra project and a local Java installation. `E
 
 Close All agy session . goto download dir and
 
+```
 tar -xzf agy-darwin-arm64.tar.gz
 codesign --verify --strict ./agy &&
   cp -p ~/.local/bin/agy ~/.local/bin/agy.backup-$(date +%Y%m%d-%H%M%S) &&
   install -m 755 ./agy ~/.local/bin/agy &&
   ~/.local/bin/agy --help
+```
