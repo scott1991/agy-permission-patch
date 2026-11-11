@@ -1,0 +1,198 @@
+name: agy update (macOS ARM64)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions: {}
+
+concurrency:
+  group: agy-darwin-arm64-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    if: github.event.repository.private && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.upstream.outputs.version }}
+      url: ${{ steps.upstream.outputs.url }}
+      sha512: ${{ steps.upstream.outputs.sha512 }}
+      tag: ${{ steps.upstream.outputs.tag }}
+      build: ${{ steps.upstream.outputs.build }}
+    steps:
+      - name: Check the official macOS ARM64 manifest
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          manifest_url=https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
+          manifest="$(curl --fail --silent --show-error --location --retry 3 \
+            --proto '=https' --proto-redir '=https' --max-time 30 "$manifest_url")"
+          version="$(jq -er '.version | select(test("\\A[0-9]+\\.[0-9]+\\.[0-9]+\\z"))' <<< "$manifest")"
+          url="$(jq -er '.url | select(test("\\Ahttps://storage\\.googleapis\\.com/antigravity-public/antigravity-cli/[A-Za-z0-9._-]+/darwin-arm/cli_mac_arm64\\.tar\\.gz\\z"))' <<< "$manifest")"
+          sha512="$(jq -er '.sha512 | select(test("\\A[0-9a-f]{128}\\z"))' <<< "$manifest")"
+          tag="agy-v${version}-darwin-arm64-${sha512:0:12}"
+
+          published="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag and (.draft | not)) | .html_url')"
+          if [[ -n "$published" ]]; then
+            printf 'Already published: %s\n' "$published" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          printf 'version=%s\nurl=%s\nsha512=%s\ntag=%s\nbuild=true\n' \
+            "$version" "$url" "$sha512" "$tag" >> "$GITHUB_OUTPUT"
+          printf 'Upstream agy %s (%s) needs a release.\n' "$version" "${sha512:0:12}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    outputs:
+      artifact: ${{ steps.package.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.13'
+
+      - name: Run offline tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Download and verify the upstream archive
+        env:
+          UPSTREAM_URL: ${{ needs.check.outputs.url }}
+          UPSTREAM_SHA512: ${{ needs.check.outputs.sha512 }}
+        run: |
+          test "$(uname -m)" = arm64
+          archive="$RUNNER_TEMP/upstream.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --max-time 300 \
+            --proto '=https' --proto-redir '=https' --output "$archive" "$UPSTREAM_URL"
+          printf '%s  %s\n' "$UPSTREAM_SHA512" "$archive" | shasum -a 512 --check
+          tar -xOzf "$archive" antigravity > "$RUNNER_TEMP/upstream-agy"
+          test "$(lipo -archs "$RUNNER_TEMP/upstream-agy")" = arm64
+
+      - name: Verify and sign an ARM64 candidate
+        run: |
+          if [[ ! -x /opt/homebrew/opt/llvm/bin/llvm-objdump ]]; then
+            brew install llvm
+          fi
+          python3 fast_patch_update.py build-candidate \
+            --source "$RUNNER_TEMP/upstream-agy" --out "$RUNNER_TEMP/agy-candidate"
+          cat "$RUNNER_TEMP/agy-candidate/review.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload review evidence if the build fails
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: agy-review-${{ needs.check.outputs.tag }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/agy-candidate/review.md
+            ${{ runner.temp }}/agy-candidate/recipe.verified.json
+            ${{ runner.temp }}/agy-candidate/recipe.template.json
+            ${{ runner.temp }}/agy-candidate/targets.json
+            ${{ runner.temp }}/agy-candidate/analysis-plan.json
+            ${{ runner.temp }}/agy-candidate/*.disasm
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Package the statically verified candidate
+        id: package
+        run: |
+          case_dir="$RUNNER_TEMP/agy-candidate"
+          package="$RUNNER_TEMP/agy-package"
+          mkdir "$package"
+          archive="$package/agy-darwin-arm64.tar.gz"
+          manifest="$case_dir/candidate/manifest.json"
+          COPYFILE_DISABLE=1 tar -czf "$archive" -C "$case_dir/candidate" agy
+          source_sha="$(shasum -a 256 "$RUNNER_TEMP/upstream-agy" | cut -d ' ' -f 1)"
+          recipe_sha="$(shasum -a 256 "$case_dir/recipe.verified.json" | cut -d ' ' -f 1)"
+          archived_sha="$(tar -xOzf "$archive" agy | shasum -a 256 | cut -d ' ' -f 1)"
+          python3 - "$manifest" "$source_sha" "$recipe_sha" "$archived_sha" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(Path(sys.argv[1]).read_text())
+          expected = [manifest[key] for key in ('source_sha256', 'recipe_sha256', 'signed_sha256')]
+          if sys.argv[2:] != expected:
+              raise SystemExit('Source, recipe, or candidate hash differs from the manifest.')
+          PY
+          cp "$case_dir/review.md" "$case_dir/recipe.verified.json" "$manifest" "$package/"
+          cd "$package"
+          shasum -a 256 agy-darwin-arm64.tar.gz manifest.json recipe.verified.json review.md > SHA256SUMS
+          printf 'artifact=agy-release-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+
+      - name: Pass release files to the publishing job
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{ steps.package.outputs.artifact }}
+          path: ${{ runner.temp }}/agy-package/
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: [check, build]
+    if: github.event.repository.private
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: release
+
+      - name: Upload assets and publish the release
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.check.outputs.tag }}
+          UPSTREAM_VERSION: ${{ needs.check.outputs.version }}
+          UPSTREAM_SHA512: ${{ needs.check.outputs.sha512 }}
+        run: |
+          sha256sum --check SHA256SUMS
+
+          state="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -r --arg tag "$RELEASE_TAG" '.[] | select(.tag_name == $tag) | .draft')"
+          case "$state" in
+            false) exit 0 ;;
+            true) echo "Resuming the draft for $RELEASE_TAG." ;;
+            '') gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" \
+              --title "agy $UPSTREAM_VERSION patch (macOS ARM64, ${UPSTREAM_SHA512:0:12})" \
+              --notes "$(cat <<NOTES
+          Unofficial macOS ARM64 build for agy $UPSTREAM_VERSION.
+
+          The upstream archive matched the official manifest SHA-512: \`$UPSTREAM_SHA512\`.
+          The patch passed static checks and strict verification of its ad hoc signature.
+          No live agy or LLM smoke test was run.
+
+          Verify the downloaded assets with \`shasum -a 256 -c SHA256SUMS\`.
+          See \`review.md\` and \`manifest.json\` for the build checks.
+          NOTES
+          )" ;;
+            *) echo "Unexpected release state for $RELEASE_TAG." >&2; exit 1 ;;
+          esac
+
+          gh release upload "$RELEASE_TAG" --clobber \
+            agy-darwin-arm64.tar.gz SHA256SUMS manifest.json recipe.verified.json review.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+          gh release view "$RELEASE_TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"

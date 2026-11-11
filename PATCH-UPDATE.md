@@ -24,13 +24,11 @@ python3 fast_patch_update.py apply --case updates/<hash> --reviewed
 
 ## GitHub Actions
 
-將 [agy update workflow](.github/workflows/agy-update.yml) 放到 GitHub 儲存庫的預設分支。第一次上傳可包含 workflow、`fast_patch_update.py`、`prepare_patch_update.py`、`extract_agy.py`、`patch_skip_permissions.py`、`tests/test_fast_patch_update.py` 和本說明。歷史執行檔、反編譯資料和 Ghidra 工具保存在本機。
+[agy update workflow](.github/workflows/agy-update.yml) 每天約在台灣時間 11:17 查詢官方 macOS ARM64 manifest。也可在私人儲存庫的預設分支透過 **Actions → agy update (macOS ARM64) → Run workflow** 手動執行。
 
-1. 在 **Actions → agy candidate (macOS ARM64) → Run workflow** 啟動。`macos-15` 是 ARM64 runner，會執行離線測試、取得上游執行檔，再用 `build-candidate` 驗證並簽章。指令或呼叫路徑變更時，從 run log 和分析檔接續完整流程。
-2. 如果要定期檢查，把 Actions 的 repository variable `AGY_STATIC_REVIEW_SCHEDULE` 設成 `true`。每天約在台灣時間 11:17 檢查當時的最新版，同一版仍會重新檢查。
-3. 私有儲存庫的成功 run 提供含 `agy` 的 tar.gz、`recipe.verified.json`、`review.md` 和 `manifest.json`。Manifest 記錄原檔、recipe 和簽章後候選檔的 SHA256，驗證範圍為 `static-only`。下載後可核對 `signed_sha256`，用下方第 4 節的 print mode 指令在已登入的本機測試該候選檔。本機安裝可依前面的 `prepare` / `apply` 快速流程執行。
-
-`build-candidate` 會以新快照核對完整反組譯及原始 bytes、旗標註冊的呼叫目標、自動批准路徑、x16 和補丁範圍。Actions 的候選檔流程只需官方安裝程式的下載連線，審查、產生補丁及簽章均在 runner 上執行。若要補 Intel 版，需先對上游 `x86_64` 執行檔另外分析和驗證。
+1. 已有相同版本和上游壓縮檔 SHA-512 前綴的 Release 時，檢查完成後即結束。上游以相同版本號發佈不同 build 時，會建立不同的 tag。
+2. 有新 build 時，Apple Silicon runner 會執行離線測試、下載並核對上游壓縮檔，再用 `build-candidate` 產生 patch 並驗證 ad hoc 簽章。指令模式變更或檢查失敗時不發佈，可從 run log 和審查 artifact 接續完整流程。
+3. 驗證通過後，私人儲存庫的 Releases 頁面會提供 `agy-darwin-arm64.tar.gz`、`SHA256SUMS`、`recipe.verified.json`、`review.md` 和 `manifest.json`。下載後用 `shasum -a 256 -c SHA256SUMS` 驗證檔案。Manifest 的驗證範圍為 `static-only`，使用前可依第 4 節在已登入的本機測試行為。
 
 ## 1. 保存更新後的版本並準備分析
 
