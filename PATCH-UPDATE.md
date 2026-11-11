@@ -1,74 +1,76 @@
-# agy 更新後重新套 patch 的流程
+# Reapply the patch after updating agy
 
-## 優先使用快速流程
+## Start with the fast workflow
 
 ```sh
 python3 fast_patch_update.py prepare
-# 閱讀輸出的 updates/<hash>/review.md，核對新版指令與旗標綁定
+# Read updates/<hash>/review.md and verify the new instructions and flag binding.
 python3 fast_patch_update.py apply --case updates/<hash> --reviewed
 ```
 
-`prepare` 不啟動 Ghidra、不呼叫 LLM、不安裝；以 Go 函式表與 LLVM 重新定位。它要求與已核對的 1.3.5 權限判斷指令完全吻合，且 flag 名稱／綁定唯一、自動批准日誌參照存在、x16 沒有後續使用；不沿用舊版絕對位址。`review.md` 集中列出需要人工判讀的指令；`--reviewed` 是操作者完成程式碼核對的紀錄，不是額外的使用者批准流程。
+`prepare` uses the Go function table and LLVM to find the patch location again. It runs without Ghidra, LLM calls, or installation. It requires an exact match to the verified 1.3.5 permission check instructions, a unique flag name and binding, a reference to the auto-approval log, and no subsequent use of x16. It resolves the addresses for the current build. `review.md` lists the instructions to review manually. `--reviewed` records that the operator completed the code review.
 
-`apply` 一次完成產生副本、簽章、**一次** RunCommand 實測、同版原檔備份、原子安裝、已安裝 SHA256／簽章核對及舊備份清理。安裝內容和已測副本完全相同，所以預設不再呼叫 LLM 重測一次。每次嘗試有獨立日誌，失敗不會刪除舊備份；測試不通過時不安裝。
+`apply` builds and signs a copy, runs **one** RunCommand smoke test, backs up the original binary for that version, installs atomically, verifies the installed SHA-256 and signature, and removes older backups. The installed bytes are identical to the tested copy, so the default profile uses one LLM call. Each attempt has its own log. A failed test stops installation and preserves earlier backups.
 
-預設是快速 smoke profile，沒有重跑互動模式或完整回歸。需要時加 `--extended-tests`，額外測未帶旗標與 workspace 外讀取（共三次 LLM 呼叫）。若指令模式改變或行為異常，回到下方完整流程；不能放寬比對或猜 offset。
+The default profile runs a short smoke test. Use `--extended-tests` to add a test without the flag and a read outside the workspace, for three LLM calls total. If the instruction pattern changes or behavior differs, use the full workflow below. Keep the strict checks and verify offsets from the new build.
 
-結果在 `updates/<hash>/FAST-RESULT.md`、`install-receipt.json`、`cleanup-receipt.json`，測試日誌在 `fast-<attempt>/`。目前版原檔備份保留於 `~/.local/bin/agy.original-<hash>`；已安裝後不再保留相同的候選執行檔與 input 副本。已經 patch 的版本再次 `prepare` 會直接回報現有收據。
+The case directory contains `updates/<hash>/FAST-RESULT.md`, `install-receipt.json`, and `cleanup-receipt.json`, with test logs in `fast-<attempt>/`. The current original backup is `~/.local/bin/agy.original-<hash>`. Installation removes duplicate candidate and input copies. If the installed version is already patched, `prepare` reports the existing receipt.
 
-維護腳本的離線驗證：`python3 -m unittest discover -s tests -v`。下方為模式改變時的完整分析流程。
+Run `python3 -m unittest discover -s tests -v` to verify the maintenance scripts offline. Use the full analysis below if the instruction pattern changes.
 
-可以沿用「skip 旗標直接進入共用工具確認器的既有自動批准分支」這個方法。每個新版要重新定位一次；不能只改舊設定檔的 SHA256，繼續使用舊位址。
+The existing approach routes the skip flag to the auto-approval branch in the shared tool confirmation handler. Resolve the patch location again for every release. Each recipe's addresses apply only to the matching SHA-256.
 
-工具只產生工作目錄中的副本，不會更新 agy、關閉自動更新，或自動取代已安裝版本。
+The patch generator writes a copy in the working directory. It leaves upstream updates and the installed version alone.
 
 ## GitHub Actions
 
-[agy update workflow](.github/workflows/agy-update.yml) 每天約在台灣時間 11:17 查詢官方 macOS ARM64 manifest。也可在私人儲存庫的預設分支透過 **Actions → agy update (macOS ARM64) → Run workflow** 手動執行。
+The [agy update workflow](.github/workflows/agy-update.yml) checks the official macOS ARM64 manifest daily at about 11:17 a.m. Taiwan time. To run it manually on the default branch of the private repository, select **Actions → agy update (macOS ARM64) → Run workflow**.
 
-1. 已有相同版本和上游壓縮檔 SHA-512 前綴的 Release 時，檢查完成後即結束。上游以相同版本號發佈不同 build 時，會建立不同的 tag。
-2. 有新 build 時，Apple Silicon runner 會執行離線測試、下載並核對上游壓縮檔，再用 `build-candidate` 產生 patch 並驗證 ad hoc 簽章。指令模式變更或檢查失敗時不發佈，可從 run log 和審查 artifact 接續完整流程。
-3. 驗證通過後，私人儲存庫的 Releases 頁面會提供 `agy-darwin-arm64.tar.gz`、`SHA256SUMS`、`recipe.verified.json`、`review.md` 和 `manifest.json`。下載後用 `shasum -a 256 -c SHA256SUMS` 驗證檔案。Manifest 的驗證範圍為 `static-only`，使用前可依第 4 節在已登入的本機測試行為。
+This project's patch tooling and releases support Apple Silicon (ARM64). Google also distributes a separate macOS Intel (x86_64) build. [Official Intel build manifest](https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_amd64.json)
 
-## 1. 保存更新後的版本並準備分析
+1. The workflow stops after the check if a release already has the same version and upstream archive SHA-512 prefix. A different upstream build with the same version gets a different tag.
+2. For a new build, an Apple Silicon runner runs the offline tests, downloads and verifies the upstream archive, builds the patch with `build-candidate`, and verifies the ad hoc signature. If the instruction pattern changes or a check fails, use the run log and review artifact to continue with the full workflow. Only verified builds are published.
+3. The private repository's Releases page provides `agy-darwin-arm64.tar.gz`, `SHA256SUMS`, `recipe.verified.json`, `review.md`, and `manifest.json`. Run `shasum -a 256 -c SHA256SUMS` after downloading to verify the files. The manifest records `static-only` validation. Section 4 describes how to test behavior on a local machine where you are signed in.
 
-先讓 agy 正常更新，再到本工具目錄執行：
+## 1. Save the updated version and prepare the analysis
+
+Let agy update through its normal process, then run these commands in this project directory.
 
 ```sh
 cd /Users/scott/Documents/agy-permission-patch
 python3 prepare_patch_update.py
 ```
 
-它預設讀取 `~/.local/bin/agy`，以 SHA256 前 12 碼建立 `updates/<hash>/`，保存不可混淆的新版本副本、Go 函式索引、分析腳本與 recipe 模板。如果該目錄已存在，會停止；可以用 `--out updates/another-name` 指定新的分析目錄。
+By default the script reads `~/.local/bin/agy`. It uses the first 12 characters of the SHA-256 to create `updates/<hash>/` and save a version-specific copy, the Go function index, an analysis script, and a recipe template. It stops if the directory already exists. Use `--out updates/another-name` to choose a new analysis directory.
 
-請將下列變數中的 `<hash>` 換成工具輸出的實際目錄名稱：
+Replace `<hash>` with the directory name printed by the script.
 
 ```sh
 export AGY_CASE_DIR="$PWD/updates/<hash>"
 "$AGY_CASE_DIR/analyze.sh"
 ```
 
-這會使用本次保留的 Ghidra 與 Java 21，反編譯 `main.init.1`、`handleToolConfirmation`、`MaybeLaunchCLI`。結果在 `$AGY_CASE_DIR/recovered/analysis/`；log 為 `$AGY_CASE_DIR/ghidra.log`，函式位址在 `targets.json`。
+The script uses the retained Ghidra installation and Java 21 to decompile `main.init.1`, `handleToolConfirmation`, and `MaybeLaunchCLI`. The results are in `$AGY_CASE_DIR/recovered/analysis/`, the log is in `$AGY_CASE_DIR/ghidra.log`, and `targets.json` contains the function addresses.
 
-目前 preparer 只支援 ARM64、little-endian Mach-O，extractor 使用本次觀察到的 Go pclntab 與 moduledata layout。若新版格式變了、函式改名或被內聯，可能在這一步失敗或缺少 targets，需要先調整分析工具。失敗時不要猜 offset。
+The preparer supports little-endian ARM64 Mach-O. The extractor relies on the Go pclntab and moduledata layouts observed in these builds. Changes to the format, function names, or inlining may cause this step to fail or omit targets. Update the analysis tools and verify offsets before continuing.
 
-## 2. 找出新版的 patch 位置
+## 2. Find the patch location in the updated version
 
-用偽碼找邏輯，再用原始 ARM64 指令核對。偽碼中的型別與參數不一定準確。
+Locate the relevant logic in the pseudocode and verify it against the original ARM64 instructions. The decompiler may misidentify types and arguments.
 
-| Recipe 欄位 | 新版中要確認的內容 |
+| Recipe field | What to verify in the updated build |
 | --- | --- |
-| `expected_sha256` | `input/agy` 的 SHA256；preparer 已填入 |
-| `flag` | `main.init.1` 註冊 `dangerously-skip-permissions` 時綁定的 bool 變數位址 |
-| `site` | 共用 `handleToolConfirmation` 中、檢查 effective permission mode 前的跳轉插入點 |
-| `original_hex` | `site` 上原本的 4 bytes，以檔案中的 little-endian 順序填入 |
-| `resume` | `site + 4`，未帶旗標時重播原指令後返回的位置 |
-| `approve` | 同一函式內既有 `always-proceed` 自動批准分支的入口；必須在其初始化與配置物件之前 |
-| `cave` | file-backed、可執行 segment 中，所有既有 section 之外的至少 24 bytes 零值 padding |
+| `expected_sha256` | SHA-256 of `input/agy`, populated by the preparer |
+| `flag` | Address of the bool bound when `main.init.1` registers `dangerously-skip-permissions` |
+| `site` | Branch insertion point in the shared `handleToolConfirmation` function, before it checks the effective permission mode |
+| `original_hex` | The four original bytes at `site` in the file's little-endian order |
+| `resume` | `site + 4`, where execution resumes after replaying the original instruction when the flag is absent |
+| `approve` | Entry to the existing `always-proceed` branch in the same function, before that branch initializes and configures its objects |
+| `cave` | At least 24 bytes of zero padding outside all existing sections in a file-backed executable segment |
 
-`analysis-plan.json` 會列出尾端 padding 候選，但不能只根據零值就確定它可用。需核對 branch 距離與記憶體保護。`recipe.template.json` 的 `review` 三個欄位預設 false，必須完成確認後才改為 true：旗標綁定、自動批准分支，以及 x16 在插入點沒有需要保留的值。
+`analysis-plan.json` lists possible padding at the end of a segment. Verify branch range and memory protection before choosing a location. The three `review` fields in `recipe.template.json` default to false. Set them to true only after verifying the flag binding, the auto-approval branch, and that x16 holds no live value at the insertion point.
 
-核對指令的範例，請將位址換成 `targets.json` 中該函式的新版起訖位址：
+For this disassembly command, substitute the function's new start and end addresses from `targets.json`.
 
 ```sh
 /opt/homebrew/opt/llvm/bin/llvm-objdump --disassemble \
@@ -76,11 +78,11 @@ export AGY_CASE_DIR="$PWD/updates/<hash>"
   "$AGY_CASE_DIR/input/agy"
 ```
 
-本工具目前只支援重播一個 **LDR X register, [register, immediate]** 指令，且不能使用 x16。若新版插入點是 ADRP、PC-relative load、branch、其他指令，或 x16 仍有存活值，不能直接使用這個 trampoline；需要修改 patch 方法。
+The patcher can replay one **LDR X register, [register, immediate]** instruction that does not use x16. An ADRP, PC-relative load, branch, other instruction, or live x16 at the insertion point requires a different approach.
 
-將填好的模板另存成 `$AGY_CASE_DIR/recipe.json`。`recipes/agy-1.2.14-a33fdf084ecd.json` 可以作為本次已驗證的範例，但它只適用於該 SHA256。
+Save the completed template as `$AGY_CASE_DIR/recipe.json`. The verified example at `recipes/agy-1.2.14-a33fdf084ecd.json` applies only to its recorded SHA-256.
 
-## 3. 產生副本並簽章
+## 3. Build and sign a copy
 
 ```sh
 python3 patch_skip_permissions.py \
@@ -93,13 +95,13 @@ codesign --force --sign - --preserve-metadata=entitlements,flags,identifier \
 codesign --verify --strict --verbose=2 "$AGY_CASE_DIR/candidate/agy"
 ```
 
-工具會檢查 SHA256、ARM64 格式、原始指令、segment 保護、空白區位置及跳轉距離。它根據 Mach-O segment 換算檔案 offset，沒有假定新版的虛擬位址與檔案 offset 差值不變。既有 output 或 manifest 不會被覆寫；重試請用新的輸出目錄。
+The patcher checks the SHA-256, ARM64 format, original instruction, segment protection, padding location, and branch range. It calculates file offsets from the Mach-O segments for each build. It preserves existing output and manifest files. Use a new output directory for each retry.
 
-這些機械檢查能避免常見套錯版本問題，不能代替第 2 步的邏輯判讀。簽章後 SHA256 會再變一次，記錄 `shasum -a 256 "$AGY_CASE_DIR/candidate/agy"` 的結果。簽章後的副本使用本機 ad-hoc 簽章。
+These checks catch common wrong-build errors. Step 2 still requires review of the control flow. Signing changes the SHA-256 again, so record the output of `shasum -a 256 "$AGY_CASE_DIR/candidate/agy"`. The candidate uses a local ad hoc signature.
 
-## 4. 驗證兩種模式
+## 4. Verify both modes
 
-先啟動 `"$AGY_CASE_DIR/candidate/agy" --help`。再用无害命令測試：
+First run `"$AGY_CASE_DIR/candidate/agy" --help`. Then test each mode with a harmless command.
 
 ```sh
 "$AGY_CASE_DIR/candidate/agy" \
@@ -113,20 +115,20 @@ codesign --verify --strict --verbose=2 "$AGY_CASE_DIR/candidate/agy"
   --prompt-interactive 'Use RunCommand exactly once to execute: printf AGY_PATCH_OK. Reply only with the command output.'
 ```
 
-互動式必須在真正的終端執行。首次 workspace trust、登入提示仍屬正常啟動流程；驗證重點是工具 permission 不再需要 yes。確認命令實際執行且得到 marker，不能只看模型口頭說成功。
+Run the interactive test in a real terminal. First-run workspace trust and sign-in prompts are part of normal startup. Verify that the tool request proceeds without a yes response and that the command actually returns the marker.
 
-兩種模式的 log 都應看到 `Always-proceed: auto-approving tool confirmation "RunCommand"`，且不應看到該命令的 soft-deny。若新版改了 log 文案，應以新版的確認處理與實際命令結果重新判讀。
+Both logs should contain `Always-proceed: auto-approving tool confirmation "RunCommand"` and no soft denial for that command. If a newer release changes the log wording, inspect the current confirmation behavior and actual command result.
 
-再讀取自己在 `/private/tmp` 建立的測試檔，檢查 workspace 外 `ViewFile` 是否自動批准。最後跑兩個對照：
+Read a test file you created in `/private/tmp` to check whether `ViewFile` is approved automatically outside the workspace. Then run two control tests.
 
-1. 新版原檔 `input/agy` 帶 skip，確認原問題是否仍存在。若原廠已修好，就不用 patch。
-2. patch 副本不帶 skip，確認正常確認／拒絕流程仍保留。對照應使用本來確實會要求確認的工具請求，避免已允許的命令規則讓結果失去意義。
+1. Run the updated original at `input/agy` with the skip flag. If upstream has fixed the original issue, skip the patch.
+2. Run the patched copy without the skip flag and verify that normal confirmation and denial still work. Use a request that ordinarily prompts for confirmation, since an allow rule can mask the behavior.
 
-## 5. 通過後安裝，保留該新版的回復檔
+## 5. Install after verification and keep a backup of that version
 
-請先退出所有 agy sessions，避免更新或其他 agy process 同時寫入執行檔。確認 installed SHA256 與 `input/agy` 完全相同後再替換；若又更新了，就重新分析。
+Exit all agy sessions so background updates and other agy processes cannot write to the executable during installation. Confirm that the installed SHA-256 matches `input/agy` exactly before replacing it. If agy has updated again, repeat the analysis for that version.
 
-下面的 Python 安裝範例只在你完成上面的人工驗證後執行。它會保存這個新版的完整原檔，再原子取代，並核對安裝內容與簽章：
+Run this Python installation example only after the manual verification above. It keeps a full copy of the matching original, replaces the executable atomically, and verifies the installed bytes and signature.
 
 ```sh
 python3 - "$AGY_CASE_DIR" <<'PY'
@@ -158,10 +160,10 @@ print('Restore source:',backup)
 PY
 ```
 
-若新 patch 行為不正常，退出 agy，將這一步保留的 `agy.original-<hash>` 複製回 `~/.local/bin/agy`，再核對 SHA256 與簽章即可。此處的備份是更新後、尚未 patch 的新版，不是永遠退回 1.2.14。
+If the patch misbehaves, exit agy, copy the saved `agy.original-<hash>` back to `~/.local/bin/agy`, and verify its SHA-256 and signature. This backup restores the original for the updated version you patched.
 
-原先的 `install_skip_permissions.py`、`verify_skip_permissions.py` 是本次 1.2.14 的安裝與驗證紀錄工具，不應拿舊日誌當作新版已通過測試的證据。
+`install_skip_permissions.py` and `verify_skip_permissions.py` document the installation and verification of 1.2.14. Use fresh test results for later builds.
 
-## 本流程目前的驗證範圍
+## Initial validation
 
-已用 1.2.14 原版回跑 preparer、Ghidra 分析腳本與 recipe patcher；生成的 unsigned binary 與先前成功執行的版本 SHA256 完全一致。不同 SHA256 的 recipe 會被拒絕且不產生輸出。尚無真正的未來版本可測，因此新版能否延用這個方法，要依第 2 與第 4 步的結果決定。
+The preparer, Ghidra analysis script, and recipe patcher were first rerun against the original 1.2.14 binary. The generated unsigned binary had the same SHA-256 as the previously tested copy. A recipe with a different SHA-256 was rejected without writing output. For later releases, use the checks in Sections 2 and 4 to decide whether the method still applies.
