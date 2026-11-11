@@ -1,0 +1,15 @@
+{
+  "expected_sha256": "88db8b4d21ece4999fa58e0b54cea77154e47b319ee178d086c446262317f3fa",
+  "site": "0x1025aca08",
+  "resume": "0x1025aca0c",
+  "approve": "0x1025aca68",
+  "flag": "0x10a8b5071",
+  "cave": "0x1076bfbd0",
+  "original_hex": "030840f9",
+  "review": {
+    "flag_binding_verified": true,
+    "approve_branch_verified": true,
+    "x16_dead_verified": true,
+    "note": "Fresh flag binding and always-proceed branch reviewed. Site moved within handler; current instructions verified."
+  }
+}

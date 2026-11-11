@@ -1,0 +1,15 @@
+{
+  "expected_sha256": "132ef8e1c0cba05e9a8259c4ee10ce30375ab93656bf71fa9ec255c7ba292611",
+  "site": "0x10250a34c",
+  "resume": "0x10250a350",
+  "approve": "0x10250a3ac",
+  "flag": "0x10a6ec071",
+  "cave": "0x107577c38",
+  "original_hex": "030840f9",
+  "review": {
+    "flag_binding_verified": true,
+    "approve_branch_verified": true,
+    "x16_dead_verified": true,
+    "note": "Fresh main.init.1 binding and shared handler instructions reviewed for 132ef8e1c0cb; same always-proceed branch semantics."
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "expected_sha256": "0e895226cb31f3ca07c780fb1eb13356f74b2470d721d266363467289bb462fb",
+  "site": "0x10252086c",
+  "resume": "0x102520870",
+  "approve": "0x1025208cc",
+  "flag": "0x10a740211",
+  "cave": "0x1075bcae0",
+  "original_hex": "030840f9",
+  "review": {
+    "flag_binding_verified": true,
+    "approve_branch_verified": true,
+    "x16_dead_verified": true,
+    "note": "Fresh main.init.1 binding and shared confirmation handler instructions reviewed for 0e895226cb31."
+  }
+}

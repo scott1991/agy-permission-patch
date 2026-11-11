@@ -1,0 +1,10 @@
+# agy patch maintenance
+
+- Never use `codex/*` as a Git branch name.
+- For a request to patch a newly updated agy, start with `python3 fast_patch_update.py prepare`. This is local/static and recognizes an already patched executable. Do not begin by listing the whole repository or reading historical reports.
+- Read the generated `updates/<hash>/review.md`. It contains fresh flag binding, the strict known instruction pattern, the auto-approve path and scratch-register check. Inspect additional saved disassembly only if needed. `--reviewed` records the agent's code review; it does not require another user confirmation.
+- If the report checks out, run `python3 fast_patch_update.py apply --case updates/<hash> --reviewed`. This signs, runs one harmless headless command smoke test, preserves the matching original, atomically installs, verifies installed hash/signature, prunes verified older original backups and duplicate executables, and writes receipts/report.
+- The normal fast profile intentionally uses one LLM call. Do not repeat the same test after installing the identical bytes. Do not rerun original-version, interactive and outside-file tests on every matching update. Use `--extended-tests` for additional headless no-flag/outside-file checks when requested or justified. Describe the profile actually run; do not call a single smoke test a full regression test.
+- If strict discovery fails, or the smoke test reveals a problem, follow `PATCH-UPDATE.md` and use Ghidra/full controls as appropriate. Never relax a pattern, guess offsets, or reuse an old recipe solely to make a release pass.
+- Keep only the current version's original executable backup after successful installation. Keep recipes, disassembly, logs and receipts. Do not delete unknown files, unmatched backups, or the reusable Ghidra installation/master project.
+- The apply step needs access to agy's normal configuration/network and writes `~/.local/bin`; request the sandbox access required for that concrete command. Do not run live LLM tests or reinstall agy merely to test changes to these maintenance scripts; prefer offline regression tests.

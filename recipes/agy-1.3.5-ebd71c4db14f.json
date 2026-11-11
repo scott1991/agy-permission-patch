@@ -1,0 +1,15 @@
+{
+  "expected_sha256": "ebd71c4db14f79fca3fd0160332a38d9037146737422dcfc1f1d21ba01a13fff",
+  "site": "0x1026a2cb8",
+  "resume": "0x1026a2cbc",
+  "approve": "0x1026a2d18",
+  "flag": "0x10ab5bbd1",
+  "cave": "0x1078f6be0",
+  "original_hex": "030840f9",
+  "review": {
+    "flag_binding_verified": true,
+    "approve_branch_verified": true,
+    "x16_dead_verified": true,
+    "note": "1.3.5 fresh review: main.init.1 at 0x1028f8f64 binds bool 0x10ab5bbd1 to 28-byte dangerously-skip-permissions at 0x1031ec90c. Handler site follows the accept-edits/auto path; existing always-proceed branch begins at 0x1026a2d18 before allocation and initialization. x16 is used only by entry stack check and is dead at site. Cave is executable segment tail padding outside all sections."
+  }
+}

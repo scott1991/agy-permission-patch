@@ -1,0 +1,15 @@
+{
+  "expected_sha256": "74935642426b5bb1fcf07a5555f847c478f4517dd002c72b9c98159cb773b932",
+  "site": "0x10280e298",
+  "resume": "0x10280e29c",
+  "approve": "0x10280e2f8",
+  "flag": "0x10b0bcaf1",
+  "cave": "0x107d9afe0",
+  "original_hex": "030840f9",
+  "review": {
+    "flag_binding_verified": true,
+    "approve_branch_verified": true,
+    "x16_dead_verified": true,
+    "note": "Strict 1.3.5 pattern matched; operator reviewed review.md before apply."
+  }
+}

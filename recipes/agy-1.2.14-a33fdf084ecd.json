@@ -1,0 +1,15 @@
+{
+  "expected_sha256": "a33fdf084ecd199df00694f35a243200a3efacb1f4f3adf04ca19d76f7f714c4",
+  "site": "0x102457c9c",
+  "resume": "0x102457ca0",
+  "approve": "0x102457cfc",
+  "flag": "0x10b178451",
+  "cave": "0x10806cb60",
+  "original_hex": "030840f9",
+  "review": {
+    "flag_binding_verified": true,
+    "approve_branch_verified": true,
+    "x16_dead_verified": true,
+    "note": "Verified on original 1.2.14; this recipe does not apply to other SHA256 values."
+  }
+}
