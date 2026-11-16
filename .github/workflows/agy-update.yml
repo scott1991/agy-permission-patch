@@ -17,7 +17,6 @@ defaults:
 
 jobs:
   check:
-    if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -56,7 +55,7 @@ jobs:
 
   build:
     needs: check
-    if: github.event.repository.private && needs.check.outputs.build == 'true'
+    if: needs.check.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     permissions:
