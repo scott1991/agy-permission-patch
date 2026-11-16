@@ -48,7 +48,7 @@ if ! COPILOT_HOME="$RUNNER_TEMP/copilot-home" \
   "$RUNNER_TEMP/copilot-cli/bin/copilot" --silent --no-ask-user \
     --no-auto-update --no-custom-instructions --disable-builtin-mcps \
     --available-tools=view --deny-tool=read \
-    -p "$prompt"$'\n\n' "$(cat "$evidence")" > "$response"; then
+    -p "$prompt"$'\n\n'"$(cat "$evidence")" > "$response"; then
   printf 'candidate_failure=%s\n' "$failure" >> "$GITHUB_OUTPUT"
   exit 1
 fi
