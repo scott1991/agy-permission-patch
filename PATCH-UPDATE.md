@@ -24,15 +24,15 @@ The patch generator writes a copy in the working directory. It leaves upstream u
 
 ## GitHub Actions
 
-The [agy update workflow](.github/workflows/agy-update.yml) checks the official macOS ARM64 manifest daily at about 11:17 a.m. Taiwan time. To run it manually on the default branch, select **Actions → agy update (macOS ARM64) → Run workflow**.
-
-In a public repository, the job summary shows the current upstream version and the first 12 characters of its archive SHA-512. The automated build and release steps run in private repositories.
+The [agy update workflow](.github/workflows/agy-update.yml) runs on the default branch of private repositories. It checks the official macOS ARM64 manifest daily at about 11:17 a.m. Taiwan time. To run it manually, select **Actions → agy update (macOS ARM64) → Run workflow**.
 
 This project's patch tooling and releases support Apple Silicon (ARM64). Google also distributes a separate macOS Intel (x86_64) build. [Official Intel build manifest](https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_amd64.json)
 
 1. The workflow stops after the check if a release already has the same version and upstream archive SHA-512 prefix. A different upstream build with the same version gets a different tag.
 2. For a new build, an Apple Silicon runner runs the offline tests, downloads and verifies the upstream archive, builds the patch with `build-candidate`, and verifies the ad hoc signature. If the instruction pattern changes or a check fails, use the run log and review artifact to continue with the full workflow. Only verified builds are published.
 3. The private repository's Releases page provides `agy-darwin-arm64.tar.gz`, `SHA256SUMS`, `recipe.verified.json`, `review.md`, and `manifest.json`. Run `shasum -a 256 -c SHA256SUMS` after downloading to verify the files. The manifest records `static-only` validation. Section 4 describes how to test behavior on a local machine where you are signed in.
+
+If a job fails, the diagnose job automatically asks GitHub Copilot CLI to summarize job and step statuses in the run summary. Edit the [diagnostic prompt](.github/ci/agy-ci-failure.prompt.md) to change what Copilot reports. It uses the built-in `GITHUB_TOKEN` with `copilot-requests: write`. GitHub bills usage to the repository owner's Copilot seat for personal repositories. The workflow still fails, and release decisions come from the existing validation jobs. [GitHub Copilot in Actions](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/copilot-cli-in-github-actions)
 
 ## 1. Save the updated version and prepare the analysis
 

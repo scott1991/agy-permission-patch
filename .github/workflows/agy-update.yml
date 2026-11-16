@@ -17,7 +17,7 @@ defaults:
 
 jobs:
   check:
-    if: github.ref_name == github.event.repository.default_branch
+    if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -33,7 +33,6 @@ jobs:
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
         run: |
           manifest_url=https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
           manifest="$(curl --fail --silent --show-error --location --retry 3 \
@@ -57,7 +56,7 @@ jobs:
 
   build:
     needs: check
-    if: needs.check.outputs.build == 'true'
+    if: github.event.repository.private && needs.check.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     permissions:
@@ -196,3 +195,25 @@ jobs:
             agy-darwin-arm64.tar.gz SHA256SUMS manifest.json recipe.verified.json review.md
           gh release edit "$RELEASE_TAG" --draft=false --latest
           gh release view "$RELEASE_TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
+
+  diagnose:
+    name: Summarize failure with Copilot
+    needs: [check, build, publish]
+    if: ${{ !cancelled() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      copilot-requests: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          sparse-checkout: /.github/ci/
+          sparse-checkout-cone-mode: false
+      - name: Write the CI failure summary
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.check.outputs.tag }}
+        run: bash .github/ci/diagnose-agy-failure.sh
