@@ -43,12 +43,6 @@ jobs:
           sha512="$(jq -er '.sha512 | select(test("\\A[0-9a-f]{128}\\z"))' <<< "$manifest")"
           tag="agy-v${version}-darwin-arm64-${sha512:0:12}"
 
-          if [[ "$REPOSITORY_PRIVATE" != true ]]; then
-            printf 'Upstream agy %s (%s). This repository runs the public version check.\n' \
-              "$version" "${sha512:0:12}" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
           published="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag and (.draft | not)) | .html_url')"
           if [[ -n "$published" ]]; then
@@ -63,7 +57,7 @@ jobs:
 
   build:
     needs: check
-    if: github.event.repository.private && needs.check.outputs.build == 'true'
+    if: needs.check.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     permissions:
@@ -156,7 +150,6 @@ jobs:
 
   publish:
     needs: [check, build]
-    if: github.event.repository.private
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
