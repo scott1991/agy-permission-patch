@@ -24,7 +24,9 @@ The patch generator writes a copy in the working directory. It leaves upstream u
 
 ## GitHub Actions
 
-The [agy update workflow](.github/workflows/agy-update.yml) checks the official macOS ARM64 manifest daily at about 11:17 a.m. Taiwan time. To run it manually on the default branch of the private repository, select **Actions → agy update (macOS ARM64) → Run workflow**.
+The [agy update workflow](.github/workflows/agy-update.yml) checks the official macOS ARM64 manifest daily at about 11:17 a.m. Taiwan time. To run it manually on the default branch, select **Actions → agy update (macOS ARM64) → Run workflow**.
+
+In a public repository, the job summary shows the current upstream version and the first 12 characters of its archive SHA-512. The automated build and release steps run in private repositories.
 
 This project's patch tooling and releases support Apple Silicon (ARM64). Google also distributes a separate macOS Intel (x86_64) build. [Official Intel build manifest](https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_amd64.json)
 

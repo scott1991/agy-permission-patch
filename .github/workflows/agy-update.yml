@@ -17,7 +17,7 @@ defaults:
 
 jobs:
   check:
-    if: github.event.repository.private && github.ref_name == github.event.repository.default_branch
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -33,6 +33,7 @@ jobs:
         id: upstream
         env:
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
         run: |
           manifest_url=https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_arm64.json
           manifest="$(curl --fail --silent --show-error --location --retry 3 \
@@ -41,6 +42,12 @@ jobs:
           url="$(jq -er '.url | select(test("\\Ahttps://storage\\.googleapis\\.com/antigravity-public/antigravity-cli/[A-Za-z0-9._-]+/darwin-arm/cli_mac_arm64\\.tar\\.gz\\z"))' <<< "$manifest")"
           sha512="$(jq -er '.sha512 | select(test("\\A[0-9a-f]{128}\\z"))' <<< "$manifest")"
           tag="agy-v${version}-darwin-arm64-${sha512:0:12}"
+
+          if [[ "$REPOSITORY_PRIVATE" != true ]]; then
+            printf 'Upstream agy %s (%s). This repository runs the public version check.\n' \
+              "$version" "${sha512:0:12}" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
 
           published="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             | jq -r --arg tag "$tag" '.[] | select(.tag_name == $tag and (.draft | not)) | .html_url')"
@@ -56,7 +63,7 @@ jobs:
 
   build:
     needs: check
-    if: needs.check.outputs.build == 'true'
+    if: github.event.repository.private && needs.check.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     permissions:
