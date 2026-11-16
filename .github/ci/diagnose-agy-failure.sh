@@ -1,18 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs")"
-build_id="$(jq -r '.jobs[] | select(.name == "build" and .conclusion == "failure") | .id' <<< "$jobs")"
-pattern_error=false
-if [[ -n "$build_id" ]] && gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-    --attempt "$GITHUB_RUN_ATTEMPT" --job "$build_id" --log-failed \
-    | grep -F 'Stopped: Permission-mode pattern changed or ambiguous' > /dev/null; then
-  pattern_error=true
+run_id="$GITHUB_RUN_ID"
+run_attempt="$GITHUB_RUN_ATTEMPT"
+if [[ -n "${DIAGNOSE_RUN_ID:-}" ]]; then
+  if [[ ! "$DIAGNOSE_RUN_ID" =~ ^[0-9]+$ ]]; then
+    printf 'The run ID must be numeric.\n' >&2
+    exit 1
+  fi
+  run_id="$DIAGNOSE_RUN_ID"
+  run_attempt="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+    --jq 'select(.status == "completed" and .conclusion == "failure") | .run_attempt')"
+  if [[ -z "$run_attempt" ]]; then
+    printf 'The selected run must be completed with a failure.\n' >&2
+    exit 1
+  fi
+fi
+jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/attempts/$run_attempt/jobs")"
+
+if [[ "$run_id" != "$GITHUB_RUN_ID" ]]; then
+  build_id="$(jq -r '.jobs[] | select(.name == "build" and .conclusion == "failure") | .id' <<< "$jobs")"
+  if [[ -n "$build_id" ]]; then
+    failed_log="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" \
+      --attempt "$run_attempt" --job "$build_id" --log-failed)"
+    if grep -Fq 'Stopped: Permission-mode pattern changed or ambiguous' <<< "$failed_log"; then
+      CANDIDATE_FAILURE=strict_pattern
+    fi
+  fi
 fi
 
-evidence="$(jq -c --arg tag "$UPSTREAM_TAG" --argjson pattern_error "$pattern_error" '{
+evidence="$(jq -c --arg tag "$UPSTREAM_TAG" --arg candidate_failure "$CANDIDATE_FAILURE" '{
   upstream_tag: $tag,
-  pattern_error_seen: $pattern_error,
+  candidate_failure: (if $candidate_failure == "" then null else $candidate_failure end),
   jobs: [.jobs[] | select(.name == "check" or .name == "build" or .name == "publish")
     | {name, conclusion, steps: [(.steps // [])[] | {name, conclusion}]}]
 }' <<< "$jobs")"
@@ -20,10 +39,13 @@ evidence="$(jq -c --arg tag "$UPSTREAM_TAG" --argjson pattern_error "$pattern_er
 {
   printf '### Workflow failure\n\n'
   printf 'Run: %s/%s/actions/runs/%s/attempts/%s\n\n' \
-    "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+    "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$run_id" "$run_attempt"
   jq -r '.jobs[] | select(.conclusion == "failure")
     | .name as $job | ([.steps[] | select(.conclusion == "failure") | .name] | join(", ")) as $steps
     | if $steps == "" then "- " + $job else "- " + $job + " / " + $steps end' <<< "$evidence"
+  if [[ "$CANDIDATE_FAILURE" == strict_pattern ]]; then
+    printf '\nThe candidate verifier reported that the permission-mode pattern changed or was ambiguous.\n'
+  fi
 } >> "$GITHUB_STEP_SUMMARY"
 
 prompt="$(cat "$(dirname -- "${BASH_SOURCE[0]}")/agy-ci-failure.prompt.md")"
@@ -36,5 +58,5 @@ summary="$(COPILOT_HOME="$RUNNER_TEMP/copilot-home" \
 test -n "$summary"
 {
   printf '\n### Copilot CI summary\n\n'
-  printf '%s\n' "$summary" | awk 'NR <= 25 { print "    " substr($0, 1, 400) }'
+  printf '%s\n' "$summary" | sed 's/^/> /'
 } >> "$GITHUB_STEP_SUMMARY"

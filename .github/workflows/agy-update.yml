@@ -2,6 +2,11 @@ name: agy update (macOS ARM64)
 
 on:
   workflow_dispatch:
+    inputs:
+      diagnose_run_id:
+        description: Replay Copilot diagnosis for a completed failed run
+        type: string
+        required: false
   schedule:
     - cron: '17 3 * * *'
 
@@ -17,6 +22,7 @@ defaults:
 
 jobs:
   check:
+    if: github.event.repository.private && github.ref_name == github.event.repository.default_branch && inputs.diagnose_run_id == ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -55,13 +61,14 @@ jobs:
 
   build:
     needs: check
-    if: needs.check.outputs.build == 'true'
+    if: github.event.repository.private && needs.check.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 25
     permissions:
       contents: read
     outputs:
       artifact: ${{ steps.package.outputs.artifact }}
+      candidate_failure: ${{ steps.verify_candidate.outputs.candidate_failure }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -87,12 +94,12 @@ jobs:
           test "$(lipo -archs "$RUNNER_TEMP/upstream-agy")" = arm64
 
       - name: Verify and sign an ARM64 candidate
+        id: verify_candidate
         run: |
           if [[ ! -x /opt/homebrew/opt/llvm/bin/llvm-objdump ]]; then
             brew install llvm
           fi
-          python3 fast_patch_update.py build-candidate \
-            --source "$RUNNER_TEMP/upstream-agy" --out "$RUNNER_TEMP/agy-candidate"
+          bash .github/ci/verify-agy-candidate.sh
           cat "$RUNNER_TEMP/agy-candidate/review.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload review evidence if the build fails
@@ -198,7 +205,7 @@ jobs:
   diagnose:
     name: Summarize failure with Copilot
     needs: [check, build, publish]
-    if: ${{ !cancelled() && contains(needs.*.result, 'failure') }}
+    if: ${{ !cancelled() && github.event.repository.private && github.ref_name == github.event.repository.default_branch && (contains(needs.*.result, 'failure') || inputs.diagnose_run_id != '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -215,4 +222,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           UPSTREAM_TAG: ${{ needs.check.outputs.tag }}
+          CANDIDATE_FAILURE: ${{ needs.build.outputs.candidate_failure }}
+          DIAGNOSE_RUN_ID: ${{ inputs.diagnose_run_id }}
         run: bash .github/ci/diagnose-agy-failure.sh

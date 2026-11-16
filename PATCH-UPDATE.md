@@ -34,6 +34,8 @@ This project's patch tooling and releases support Apple Silicon (ARM64). Google 
 
 If a job fails, the diagnose job automatically asks GitHub Copilot CLI to summarize job and step statuses in the run summary. Edit the [diagnostic prompt](.github/ci/agy-ci-failure.prompt.md) to change what Copilot reports. It uses the built-in `GITHUB_TOKEN` with `copilot-requests: write`. GitHub bills usage to the repository owner's Copilot seat for personal repositories. The workflow still fails, and release decisions come from the existing validation jobs. [GitHub Copilot in Actions](https://docs.github.com/en/copilot/concepts/agents/copilot-cli/copilot-cli-in-github-actions)
 
+To replay just the diagnosis, use **Run workflow** and set `diagnose_run_id` to the ID of a completed failed run from this repository.
+
 ## 1. Save the updated version and prepare the analysis
 
 Let agy update through its normal process, then run these commands in this project directory.
