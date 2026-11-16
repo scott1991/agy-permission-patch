@@ -60,6 +60,39 @@ class LocatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'pattern changed'):
             fast.locate_recipe(raw, plan, init, handler)
 
+    def test_source_bound_profile_rechecks_changed_instruction_window(self):
+        raw, plan, init, handler = fixture()
+        pc, word, _ = handler[0]
+        changed = word ^ (1 << 10)
+        handler[0] = (pc, changed, 'ldr x3, [x0, #24]')
+        profile = (changed, *fast.MODE_CHECK[1:])
+        raw = bytearray(raw)
+        struct.pack_into('<I', raw, pc - 0x100000000, changed)
+        target = dict(name='handleToolConfirmation', address=hex(handler[0][0]),
+                      end=hex(handler[-1][0] + 4))
+        fast.verify_disassembly(bytes(raw), target, handler)
+        recipe, _ = fast.locate_recipe(raw, plan, init, handler, mode_check=profile)
+        self.assertEqual(int(recipe['site'], 16), pc)
+        self.assertEqual(recipe['original_hex'], struct.pack('<I', changed).hex())
+
+    def test_mode_profile_must_be_unique_source_bound_and_exact_length(self):
+        profile = json.dumps({
+            'source_sha256': digest(b'source'),
+            'mode_check_words': [f'{word:08x}' for word in fast.MODE_CHECK],
+        })
+        parsed = fast.parse_mode_profile(profile, digest(b'source'))
+        self.assertEqual(parsed['mode_check'], fast.MODE_CHECK)
+        with self.assertRaisesRegex(ValueError, 'source hash mismatch'):
+            fast.parse_mode_profile(profile, digest(b'other'))
+        malformed = json.dumps({
+            'source_sha256': digest(b'source'),
+            'mode_check_words': ['00000000'],
+        })
+        with self.assertRaisesRegex(ValueError, 'exactly 26'):
+            fast.parse_mode_profile(malformed, digest(b'source'))
+        with self.assertRaisesRegex(ValueError, 'one valid'):
+            fast.parse_mode_profile(profile + '\n' + profile, digest(b'source'))
+
     def test_wrong_flag_string_is_rejected(self):
         raw, plan, init, handler = fixture()
         raw = raw[:0x200] + b'X' + raw[0x201:]

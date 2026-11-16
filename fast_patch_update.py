@@ -113,7 +113,33 @@ def direct_call_name(row, function_names):
     return function_names.get(pc + displacement * 4)
 
 
-def locate_recipe(raw, plan, init, handler, function_names=None):
+def parse_mode_profile(response, source_sha256):
+    decoder = json.JSONDecoder()
+    profiles = []
+    for offset, char in enumerate(response):
+        if char != '{':
+            continue
+        try:
+            value, _ = decoder.raw_decode(response[offset:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and set(value) == {'source_sha256', 'mode_check_words'}:
+            profiles.append(value)
+    require(len(profiles) == 1, 'Copilot did not return one valid permission-mode profile')
+    profile = profiles[0]
+    require(profile['source_sha256'] == source_sha256, 'Permission-mode profile source hash mismatch')
+    words = profile['mode_check_words']
+    require(isinstance(words, list) and len(words) == len(MODE_CHECK),
+            'Permission-mode profile must contain exactly 26 instructions')
+    require(all(isinstance(word, str) and re.fullmatch(r'[0-9a-fA-F]{8}', word)
+                for word in words), 'Permission-mode profile contains an invalid instruction')
+    normalized = [word.lower() for word in words]
+    return dict(source_sha256=source_sha256, mode_check_words=normalized,
+                mode_check=tuple(int(word, 16) for word in normalized))
+
+
+def locate_recipe(raw, plan, init, handler, function_names=None, mode_check=MODE_CHECK):
+    require(len(mode_check) == len(MODE_CHECK), 'Permission-mode profile has the wrong length')
     segments, _ = read_layout(raw)
     binding = []
     words = [row[1] for row in init]
@@ -133,19 +159,20 @@ def locate_recipe(raw, plan, init, handler, function_names=None):
             continue
     require(len(binding) == 1, 'Flag binding not unique; use full analysis')
     handler_words = [row[1] for row in handler]
-    sites = [i for i in range(len(handler_words) - len(MODE_CHECK) + 1)
-             if tuple(handler_words[i:i + len(MODE_CHECK)]) == MODE_CHECK]
-    require(len(sites) == 1, 'Permission-mode pattern changed or ambiguous; use full analysis')
+    sites = [i for i in range(len(handler_words) - len(mode_check) + 1)
+             if tuple(handler_words[i:i + len(mode_check)]) == tuple(mode_check)]
+    require(len(sites) <= 1, 'Permission-mode pattern ambiguous; use full analysis')
+    require(len(sites) == 1, 'Permission-mode pattern changed; use full analysis')
     index = sites[0]
     site = handler[index][0]
-    approve = handler[index + len(MODE_CHECK) - 1][0]
+    approve = handler[index + len(mode_check) - 1][0]
     # x16 must not be read later on either path. A stricter ban on any use is
     # deliberately inexpensive and conservative; a changed layout falls back.
     require(not any(re.search(r'\b[wx]16\b', row[2]) for row in handler[index:]),
             'x16 use after patch site; use full analysis')
     log_marker = b'Always-proceed: auto-approving tool confirmation %q at step %d'
     log_refs = []
-    for j in range(index + len(MODE_CHECK), min(index + 100, len(handler_words) - 1)):
+    for j in range(index + len(mode_check), min(index + 100, len(handler_words) - 1)):
         try:
             address = pair_address(handler_words, j, handler[j][0], 6)
             offset = locate(segments, address, len(log_marker), 1)
@@ -164,7 +191,7 @@ def locate_recipe(raw, plan, init, handler, function_names=None):
         require(words[binding_index + 7] == 0xd2800766 and
                 direct_call_name(init[binding_index + 8], function_names) == FLAG_REGISTRAR,
                 'Flag registration call changed; use full analysis')
-        approval = handler[index + len(MODE_CHECK) - 1:log_refs[0] + 6]
+        approval = handler[index + len(mode_check) - 1:log_refs[0] + 6]
         require([asm.split()[0] for _, _, asm in approval] == APPROVAL_MNEMONICS and
                 [word for _, word, asm in approval if asm.split()[0] == 'cbz']
                 == [0x34000083, 0x34000081],
@@ -172,11 +199,15 @@ def locate_recipe(raw, plan, init, handler, function_names=None):
         require(tuple(direct_call_name(row, function_names) for row in approval
                       if row[2].split()[0] == 'bl') == APPROVAL_CALLS,
                 'Auto-approve calls changed; use full analysis')
-    note = ('Automated static review passed for the source SHA256 and known ARM64 paths.'
-            if automated else 'Strict 1.3.5 instruction pattern matched; read review.md before --reviewed.')
+    note = ('AI-assisted version-specific match passed independent static checks.'
+            if automated and tuple(mode_check) != MODE_CHECK else
+            'Automated static review passed for the source SHA256 and known ARM64 paths.'
+            if automated else
+            'Strict 1.3.5 instruction pattern matched; read review.md before --reviewed.')
     recipe = dict(expected_sha256=hashlib.sha256(raw).hexdigest(), site=hex(site),
                   resume=hex(site + 4), approve=hex(approve), flag=hex(flag),
-                  cave=plan['padding_candidates'][0]['address'], original_hex='030840f9',
+                  cave=plan['padding_candidates'][0]['address'],
+                  original_hex=struct.pack('<I', handler[index][1]).hex(),
                   review=dict(flag_binding_verified=automated, approve_branch_verified=automated,
                               x16_dead_verified=automated, note=note))
     snippet = ['Flag registration (x2 = bool, x3 = exact flag name):']
@@ -219,7 +250,7 @@ def prepare(source):
     print('After code review: python3 fast_patch_update.py apply --case', case, '--reviewed')
 
 
-def review_snapshot(case, binary, plan, automated=False):
+def review_snapshot(case, binary, plan, automated=False, mode_profile=None):
     targets = json.loads((case / 'targets.json').read_text())
     init = [t for t in targets if t['name'] == 'main.init.1']
     handler = [t for t in targets if t['name'].endswith('.handleToolConfirmation')]
@@ -236,16 +267,25 @@ def review_snapshot(case, binary, plan, automated=False):
             function_names = {int(row['address'], 16): row['name']
                               for row in csv.DictReader(stream, delimiter='\t')
                               if row['name'] in reviewed_names}
-    recipe, snippet = locate_recipe(raw, plan, init_rows, handler_rows, function_names)
+    mode_check = mode_profile['mode_check'] if mode_profile else MODE_CHECK
+    recipe, snippet = locate_recipe(raw, plan, init_rows, handler_rows, function_names,
+                                    mode_check=mode_check)
     require(recipe['expected_sha256'] == plan['sha256'], 'Snapshot hash mismatch')
     recipe_path = case / ('recipe.verified.json' if automated else 'recipe.proposed.json')
     write_json(recipe_path, recipe)
-    summary = ('Automated static review passed. Candidate requires a local behavior test.'
+    summary = ('AI-proposed version-specific instruction window matched uniquely; all existing '
+               'static checks passed. Candidate requires a local behavior test.'
+               if automated and mode_profile else
+               'Automated static review passed. Candidate requires a local behavior test.'
                if automated else
                'Strict 1.3.5 pattern matched. Confirm the flag binding and branch entry below before applying.')
+    profile_evidence = ('\n\nCopilot supplied this exact instruction window for the source hash. '
+                        'The verifier independently matched it uniquely and ran its existing '
+                        'flag-binding, approval-path, scratch-register, disassembly, and patch checks.'
+                        if mode_profile else '')
     (case / 'review.md').write_text(
         '# Fast patch review\n\nSHA256: `' + recipe['expected_sha256'] + '`\n\n'
-        + summary + ' x16 has no later uses. The patcher separately '
+        + summary + profile_evidence + ' x16 has no later uses. The patcher separately '
         'checks protections, zero padding, original bytes and branch ranges.\n\n'
         '```json\n' + json.dumps(recipe, indent=2) + '\n```\n\n```asm\n'
         + snippet + '\n```\n')
@@ -259,17 +299,31 @@ def patch_and_sign(source, recipe_path, candidate):
     run(['codesign', '--verify', '--strict', candidate])
 
 
-def build_candidate(source, case):
-    run([sys.executable, ROOT / 'prepare_patch_update.py', '--source', source, '--out', case])
+def build_candidate(source, case, mode_profile_path=None):
+    source_digest = sha(source)
+    if not case.exists():
+        run([sys.executable, ROOT / 'prepare_patch_update.py', '--source', source, '--out', case])
     plan = json.loads((case / 'analysis-plan.json').read_text())
     snapshot = case / 'input/agy'
-    recipe_path = review_snapshot(case, snapshot, plan, automated=True)
+    require(plan['sha256'] == source_digest and sha(snapshot) == source_digest,
+            'Analysis snapshot/source hash mismatch')
+    mode_profile = None
+    if mode_profile_path:
+        mode_profile = parse_mode_profile(Path(mode_profile_path).read_text(), source_digest)
+    recipe_path = review_snapshot(case, snapshot, plan, automated=True,
+                                  mode_profile=mode_profile)
+    if mode_profile:
+        write_json(case / 'mode-profile.verified.json',
+                   {key: value for key, value in mode_profile.items() if key != 'mode_check'})
     candidate = case / 'candidate/agy'
     patch_and_sign(snapshot, recipe_path, candidate)
     manifest_path = candidate.with_name('manifest.json')
     manifest = json.loads(manifest_path.read_text())
     manifest.update(recipe_sha256=sha(recipe_path), signed_sha256=sha(candidate),
                     test_profile='static-only', smoke_tested=False)
+    if mode_profile:
+        manifest.update(verification_mode='ai-assisted-exact-instruction-window',
+                        mode_profile_sha256=sha(case / 'mode-profile.verified.json'))
     write_json(manifest_path, manifest)
     print('Signed ARM64 candidate:', candidate, '\nValidation: static-only; test behavior locally before use.')
 
@@ -441,6 +495,8 @@ def main():
     build = commands.add_parser('build-candidate', help='automatically review, patch and sign a fresh candidate')
     build.add_argument('--source', type=Path, required=True)
     build.add_argument('--out', type=Path, required=True)
+    build.add_argument('--mode-profile', type=Path,
+                       help='Copilot response containing a source-bound exact instruction window')
     action = commands.add_parser('apply', help='sign, smoke-test, back up, install and prune old backups')
     action.add_argument('--case', type=Path, required=True)
     action.add_argument('--reviewed', action='store_true')
@@ -451,7 +507,7 @@ def main():
         if args.command == 'prepare':
             prepare(args.source.resolve())
         elif args.command == 'build-candidate':
-            build_candidate(args.source.resolve(), args.out.resolve())
+            build_candidate(args.source.resolve(), args.out.resolve(), args.mode_profile)
         else:
             apply(args.case, args.reviewed, args.extended_tests)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:

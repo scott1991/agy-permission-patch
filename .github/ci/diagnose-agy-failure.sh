@@ -23,8 +23,10 @@ if [[ "$run_id" != "$GITHUB_RUN_ID" ]]; then
   if [[ -n "$build_id" ]]; then
     failed_log="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" \
       --attempt "$run_attempt" --job "$build_id" --log-failed)"
-    if grep -Fq 'Stopped: Permission-mode pattern changed or ambiguous' <<< "$failed_log"; then
+    if grep -Fq 'Stopped: Permission-mode pattern changed;' <<< "$failed_log"; then
       CANDIDATE_FAILURE=strict_pattern
+    elif grep -Fq 'Stopped: Permission-mode pattern ambiguous;' <<< "$failed_log"; then
+      CANDIDATE_FAILURE=pattern_ambiguous
     fi
   fi
 fi
@@ -44,7 +46,9 @@ evidence="$(jq -c --arg tag "$UPSTREAM_TAG" --arg candidate_failure "$CANDIDATE_
     | .name as $job | ([.steps[] | select(.conclusion == "failure") | .name] | join(", ")) as $steps
     | if $steps == "" then "- " + $job else "- " + $job + " / " + $steps end' <<< "$evidence"
   if [[ "$CANDIDATE_FAILURE" == strict_pattern ]]; then
-    printf '\nThe candidate verifier reported that the permission-mode pattern changed or was ambiguous.\n'
+    printf '\nThe permission-mode pattern was not found; the build attempted one AI-assisted profile and the existing verifier still failed.\n'
+  elif [[ "$CANDIDATE_FAILURE" == pattern_ambiguous ]]; then
+    printf '\nThe candidate verifier found multiple permission-mode pattern matches; CI did not select one automatically.\n'
   fi
 } >> "$GITHUB_STEP_SUMMARY"
 

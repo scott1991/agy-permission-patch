@@ -66,6 +66,7 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
+      copilot-requests: write
     outputs:
       artifact: ${{ steps.package.outputs.artifact }}
       candidate_failure: ${{ steps.verify_candidate.outputs.candidate_failure }}
@@ -113,6 +114,8 @@ jobs:
             ${{ runner.temp }}/agy-candidate/recipe.template.json
             ${{ runner.temp }}/agy-candidate/targets.json
             ${{ runner.temp }}/agy-candidate/analysis-plan.json
+            ${{ runner.temp }}/agy-candidate/mode-profile.verified.json
+            ${{ runner.temp }}/agy-mode-profile-response.txt
             ${{ runner.temp }}/agy-candidate/*.disasm
           retention-days: 7
           if-no-files-found: ignore
@@ -140,8 +143,13 @@ jobs:
               raise SystemExit('Source, recipe, or candidate hash differs from the manifest.')
           PY
           cp "$case_dir/review.md" "$case_dir/recipe.verified.json" "$manifest" "$package/"
+          files=(agy-darwin-arm64.tar.gz manifest.json recipe.verified.json review.md)
+          if [[ -f "$case_dir/mode-profile.verified.json" ]]; then
+            cp "$case_dir/mode-profile.verified.json" "$package/"
+            files+=(mode-profile.verified.json)
+          fi
           cd "$package"
-          shasum -a 256 agy-darwin-arm64.tar.gz manifest.json recipe.verified.json review.md > SHA256SUMS
+          shasum -a 256 "${files[@]}" > SHA256SUMS
           printf 'artifact=agy-release-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
       - name: Pass release files to the publishing job
@@ -197,8 +205,9 @@ jobs:
             *) echo "Unexpected release state for $RELEASE_TAG." >&2; exit 1 ;;
           esac
 
-          gh release upload "$RELEASE_TAG" --clobber \
-            agy-darwin-arm64.tar.gz SHA256SUMS manifest.json recipe.verified.json review.md
+          assets=(agy-darwin-arm64.tar.gz SHA256SUMS manifest.json recipe.verified.json review.md)
+          [[ ! -f mode-profile.verified.json ]] || assets+=(mode-profile.verified.json)
+          gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
           gh release edit "$RELEASE_TAG" --draft=false --latest
           gh release view "$RELEASE_TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
 
