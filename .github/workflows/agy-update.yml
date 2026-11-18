@@ -96,6 +96,8 @@ jobs:
 
       - name: Verify and sign an ARM64 candidate
         id: verify_candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [[ ! -x /opt/homebrew/opt/llvm/bin/llvm-objdump ]]; then
             brew install llvm
