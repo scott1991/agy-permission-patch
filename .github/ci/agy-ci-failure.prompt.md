@@ -1,8 +1,8 @@
 Summarize this GitHub Actions failure in up to three short bullets. Identify the first
 failed step, the relevant checks that passed, and whether retrying the same inputs is
-likely to help. If `candidate_failure` is `strict_pattern`, report that the verifier
-did not find the known permission-mode pattern and its AI-assisted retry did not
-pass. If `candidate_failure` is `pattern_ambiguous`, report that multiple pattern
-matches were found and CI did not select one. If the value is `other` or null, a
-pattern failure is unconfirmed. Report CI findings only. Do not propose code
-changes, validation changes, or ways to alter the upstream binary.
+likely to help. Interpret `candidate_failure`: `strict_pattern` means the deterministic
+locator stopped on a changed semantic pattern; `llm_recipe_rejected` means an opencode
+proposal was rejected by the strict validator; `llm_no_proposal` means opencode produced
+no usable proposal; `other` or null means a pattern failure is unconfirmed. Report CI
+findings only. Do not propose code changes, validation changes, or ways to alter the
+upstream binary.

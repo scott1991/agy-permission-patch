@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       diagnose_run_id:
-        description: Replay Copilot diagnosis for a completed failed run
+        description: Replay opencode diagnosis for a completed failed run
         type: string
         required: false
   schedule:
@@ -63,10 +63,9 @@ jobs:
     needs: check
     if: github.event.repository.private && needs.check.outputs.build == 'true'
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 35
     permissions:
       contents: read
-      copilot-requests: write
     outputs:
       artifact: ${{ steps.package.outputs.artifact }}
       candidate_failure: ${{ steps.verify_candidate.outputs.candidate_failure }}
@@ -77,6 +76,11 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.13'
+
+      - name: Install opencode for the fallback proposal
+        run: |
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.6
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
 
       - name: Run offline tests
         run: python3 -m unittest discover -s tests -v
@@ -96,8 +100,6 @@ jobs:
 
       - name: Verify and sign an ARM64 candidate
         id: verify_candidate
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [[ ! -x /opt/homebrew/opt/llvm/bin/llvm-objdump ]]; then
             brew install llvm
@@ -113,11 +115,11 @@ jobs:
           path: |
             ${{ runner.temp }}/agy-candidate/review.md
             ${{ runner.temp }}/agy-candidate/recipe.verified.json
+            ${{ runner.temp }}/agy-candidate/recipe.proposed.json
             ${{ runner.temp }}/agy-candidate/recipe.template.json
             ${{ runner.temp }}/agy-candidate/targets.json
             ${{ runner.temp }}/agy-candidate/analysis-plan.json
-            ${{ runner.temp }}/agy-candidate/mode-profile.verified.json
-            ${{ runner.temp }}/agy-mode-profile-response.txt
+            ${{ runner.temp }}/agy-candidate/failure.log
             ${{ runner.temp }}/agy-candidate/*.disasm
           retention-days: 7
           if-no-files-found: ignore
@@ -145,13 +147,8 @@ jobs:
               raise SystemExit('Source, recipe, or candidate hash differs from the manifest.')
           PY
           cp "$case_dir/review.md" "$case_dir/recipe.verified.json" "$manifest" "$package/"
-          files=(agy-darwin-arm64.tar.gz manifest.json recipe.verified.json review.md)
-          if [[ -f "$case_dir/mode-profile.verified.json" ]]; then
-            cp "$case_dir/mode-profile.verified.json" "$package/"
-            files+=(mode-profile.verified.json)
-          fi
           cd "$package"
-          shasum -a 256 "${files[@]}" > SHA256SUMS
+          shasum -a 256 agy-darwin-arm64.tar.gz manifest.json recipe.verified.json review.md > SHA256SUMS
           printf 'artifact=agy-release-%s-%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
 
       - name: Pass release files to the publishing job
@@ -207,28 +204,29 @@ jobs:
             *) echo "Unexpected release state for $RELEASE_TAG." >&2; exit 1 ;;
           esac
 
-          assets=(agy-darwin-arm64.tar.gz SHA256SUMS manifest.json recipe.verified.json review.md)
-          [[ ! -f mode-profile.verified.json ]] || assets+=(mode-profile.verified.json)
-          gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
+          gh release upload "$RELEASE_TAG" --clobber \
+            agy-darwin-arm64.tar.gz SHA256SUMS manifest.json recipe.verified.json review.md
           gh release edit "$RELEASE_TAG" --draft=false --latest
           gh release view "$RELEASE_TAG" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
 
   diagnose:
-    name: Summarize failure with Copilot
+    name: Summarize failure with opencode
     needs: [check, build, publish]
     if: ${{ !cancelled() && github.event.repository.private && github.ref_name == github.event.repository.default_branch && (contains(needs.*.result, 'failure') || inputs.diagnose_run_id != '') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    continue-on-error: true
     permissions:
       actions: read
       contents: read
-      copilot-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
           sparse-checkout: /.github/ci/
           sparse-checkout-cone-mode: false
+      - name: Install opencode
+        run: curl -fsSL https://opencode.ai/install | bash -s -- --version 1.19.6
       - name: Write the CI failure summary
         env:
           GITHUB_TOKEN: ${{ github.token }}

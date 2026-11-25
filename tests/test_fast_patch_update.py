@@ -60,39 +60,6 @@ class LocatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'pattern changed'):
             fast.locate_recipe(raw, plan, init, handler)
 
-    def test_source_bound_profile_rechecks_changed_instruction_window(self):
-        raw, plan, init, handler = fixture()
-        pc, word, _ = handler[0]
-        changed = word ^ (1 << 10)
-        handler[0] = (pc, changed, 'ldr x3, [x0, #24]')
-        profile = (changed, *fast.MODE_CHECK[1:])
-        raw = bytearray(raw)
-        struct.pack_into('<I', raw, pc - 0x100000000, changed)
-        target = dict(name='handleToolConfirmation', address=hex(handler[0][0]),
-                      end=hex(handler[-1][0] + 4))
-        fast.verify_disassembly(bytes(raw), target, handler)
-        recipe, _ = fast.locate_recipe(raw, plan, init, handler, mode_check=profile)
-        self.assertEqual(int(recipe['site'], 16), pc)
-        self.assertEqual(recipe['original_hex'], struct.pack('<I', changed).hex())
-
-    def test_mode_profile_must_be_unique_source_bound_and_exact_length(self):
-        profile = json.dumps({
-            'source_sha256': digest(b'source'),
-            'mode_check_words': [f'{word:08x}' for word in fast.MODE_CHECK],
-        })
-        parsed = fast.parse_mode_profile(profile, digest(b'source'))
-        self.assertEqual(parsed['mode_check'], fast.MODE_CHECK)
-        with self.assertRaisesRegex(ValueError, 'source hash mismatch'):
-            fast.parse_mode_profile(profile, digest(b'other'))
-        malformed = json.dumps({
-            'source_sha256': digest(b'source'),
-            'mode_check_words': ['00000000'],
-        })
-        with self.assertRaisesRegex(ValueError, 'exactly 26'):
-            fast.parse_mode_profile(malformed, digest(b'source'))
-        with self.assertRaisesRegex(ValueError, 'one valid'):
-            fast.parse_mode_profile(profile + '\n' + profile, digest(b'source'))
-
     def test_wrong_flag_string_is_rejected(self):
         raw, plan, init, handler = fixture()
         raw = raw[:0x200] + b'X' + raw[0x201:]
@@ -246,6 +213,49 @@ class DeliveryTests(unittest.TestCase):
             self.assertFalse((case / 'input/agy').exists())
             self.assertTrue((case / 'FAST-RESULT.md').exists())
             self.assertTrue((case / 'cleanup-receipt.json').exists())
+
+
+class DerivationTests(unittest.TestCase):
+    def test_derives_site_when_prefix_offsets_change(self):
+        raw, plan, init, handler = fixture()
+        pc, _, asm = handler[0]
+        handler[0] = (pc, 0xf9400803, asm)  # ldr x3, [x0, #0x10]
+        pc, _, asm = handler[2]
+        handler[2] = (pc, 0xa94f1863, asm)  # moved ldp offset
+        recipe, _ = fast.locate_recipe(raw, plan, init, handler)
+        self.assertEqual(int(recipe['site'], 16), handler[0][0])
+        self.assertEqual(recipe['original_hex'], '030840f9')
+        self.assertEqual(int(recipe['approve'], 16), handler[len(fast.MODE_CHECK) - 1][0])
+
+    def test_derivation_rejects_changed_semantic_tail(self):
+        raw, plan, init, handler = fixture()
+        pc, word, asm = handler[10]
+        handler[10] = (pc, word ^ 1, asm)
+        with self.assertRaisesRegex(ValueError, 'pattern changed or ambiguous'):
+            fast.locate_recipe(raw, plan, init, handler)
+
+    def test_derivation_requires_ldr_site(self):
+        raw, plan, init, handler = fixture()
+        pc, _, asm = handler[0]
+        handler[0] = (pc, 0x90000000, asm)  # adrp, not a replayable LDR
+        with self.assertRaisesRegex(ValueError, 'prologue changed'):
+            fast.locate_recipe(raw, plan, init, handler)
+
+    def test_validate_recipe_rejects_wrong_flag(self):
+        raw, plan, init, handler = fixture()
+        plan['sha256'] = digest(raw)
+        recipe, _ = fast.locate_recipe(raw, plan, init, handler)
+        recipe['flag'] = hex(int(recipe['flag'], 16) + 1)
+        with self.assertRaisesRegex(ValueError, 'flag differs'):
+            fast.validate_recipe(raw, plan, init, handler, {}, recipe)
+
+    def test_validate_recipe_rejects_shifted_site(self):
+        raw, plan, init, handler = fixture()
+        plan['sha256'] = digest(raw)
+        recipe, _ = fast.locate_recipe(raw, plan, init, handler)
+        recipe['site'] = hex(int(recipe['site'], 16) + 4)
+        with self.assertRaisesRegex(ValueError, 'site'):
+            fast.validate_recipe(raw, plan, init, handler, {}, recipe)
 
 
 if __name__ == '__main__':

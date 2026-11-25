@@ -23,10 +23,10 @@ if [[ "$run_id" != "$GITHUB_RUN_ID" ]]; then
   if [[ -n "$build_id" ]]; then
     failed_log="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" \
       --attempt "$run_attempt" --job "$build_id" --log-failed)"
-    if grep -Fq 'Stopped: Permission-mode pattern changed;' <<< "$failed_log"; then
+    if grep -Fq 'Permission-mode pattern changed or ambiguous' <<< "$failed_log" \
+       || grep -Fq 'Permission-mode prologue changed' <<< "$failed_log" \
+       || grep -Fq 'Auto-approve path changed' <<< "$failed_log"; then
       CANDIDATE_FAILURE=strict_pattern
-    elif grep -Fq 'Stopped: Permission-mode pattern ambiguous;' <<< "$failed_log"; then
-      CANDIDATE_FAILURE=pattern_ambiguous
     fi
   fi
 fi
@@ -45,22 +45,23 @@ evidence="$(jq -c --arg tag "$UPSTREAM_TAG" --arg candidate_failure "$CANDIDATE_
   jq -r '.jobs[] | select(.conclusion == "failure")
     | .name as $job | ([.steps[] | select(.conclusion == "failure") | .name] | join(", ")) as $steps
     | if $steps == "" then "- " + $job else "- " + $job + " / " + $steps end' <<< "$evidence"
-  if [[ "$CANDIDATE_FAILURE" == strict_pattern ]]; then
-    printf '\nThe permission-mode pattern was not found; the build attempted one AI-assisted profile and the existing verifier still failed.\n'
-  elif [[ "$CANDIDATE_FAILURE" == pattern_ambiguous ]]; then
-    printf '\nThe candidate verifier found multiple permission-mode pattern matches; CI did not select one automatically.\n'
-  fi
+  case "$CANDIDATE_FAILURE" in
+    strict_pattern)
+      printf '\nThe deterministic locator stopped on a changed semantic pattern.\n' ;;
+    llm_recipe_rejected)
+      printf '\nThe opencode proposal was rejected by the strict validator.\n' ;;
+    llm_no_proposal)
+      printf '\nNo usable opencode proposal was produced.\n' ;;
+  esac
 } >> "$GITHUB_STEP_SUMMARY"
 
 prompt="$(cat "$(dirname -- "${BASH_SOURCE[0]}")/agy-ci-failure.prompt.md")"
 cd "$RUNNER_TEMP"
-env -u GITHUB_TOKEN npm install --global --prefix "$RUNNER_TEMP/copilot-cli" @github/copilot@1.0.109
-summary="$(COPILOT_HOME="$RUNNER_TEMP/copilot-home" \
-  "$RUNNER_TEMP/copilot-cli/bin/copilot" --silent --no-ask-user \
-  --no-auto-update --no-custom-instructions --disable-builtin-mcps \
-  --available-tools=view --deny-tool=read -p "$prompt"$'\n\n'"$evidence")"
+summary="$(env -u GITHUB_TOKEN -u OPENCODE_CONSOLE_TOKEN \
+  opencode run --pure -m opencode/deepseek-v4.1-flash-free \
+  "$prompt"$'\n\n'"$evidence" 2>/dev/null)"
 test -n "$summary"
 {
-  printf '\n### Copilot CI summary\n\n'
+  printf '\n### opencode CI summary\n\n'
   printf '%s\n' "$summary" | sed 's/^/> /'
 } >> "$GITHUB_STEP_SUMMARY"
