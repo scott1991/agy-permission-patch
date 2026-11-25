@@ -193,6 +193,8 @@ def locate_recipe(raw, plan, init, handler, function_names=None):
         site_index, approve_index = derive_site(handler)
     site = handler[site_index][0]
     approve = handler[approve_index][0]
+    print(f'Permission-mode site {hex(site)}: '
+          + ('exact pattern match' if sites else 'derived from the strict semantic tail'))
     # x16 must not be read later on either path. A stricter ban on any use is
     # deliberately inexpensive and conservative; a changed layout falls back.
     require(not any(re.search(r'\b[wx]16\b', row[2]) for row in handler[site_index:]),
