@@ -97,9 +97,11 @@ These commands use the retained Ghidra project and a local Java installation. `E
 
 ## Release Usage
 
-Close All agy session . goto download dir and
+Close all agy sessions, then run the following in a writable directory. This repository is private, so download with the authenticated GitHub CLI. A signed-in browser can also open <https://github.com/scott1991/agy-permission-patch/releases/latest/download/agy-darwin-arm64.tar.gz>.
 
-```
+```sh
+gh release download --repo scott1991/agy-permission-patch \
+  --pattern agy-darwin-arm64.tar.gz --dir .
 tar -xzf agy-darwin-arm64.tar.gz
 codesign --verify --strict ./agy &&
   cp -p ~/.local/bin/agy ~/.local/bin/agy.backup-$(date +%Y%m%d-%H%M%S) &&
