@@ -22,7 +22,7 @@ defaults:
 
 jobs:
   check:
-    if: github.event.repository.private && github.ref_name == github.event.repository.default_branch && inputs.diagnose_run_id == ''
+    if: github.ref_name == github.event.repository.default_branch && inputs.diagnose_run_id == ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -61,7 +61,7 @@ jobs:
 
   build:
     needs: check
-    if: github.event.repository.private && needs.check.outputs.build == 'true'
+    if: needs.check.outputs.build == 'true'
     runs-on: macos-15
     timeout-minutes: 35
     permissions:
@@ -212,7 +212,7 @@ jobs:
   diagnose:
     name: Summarize failure with opencode
     needs: [check, build, publish]
-    if: ${{ !cancelled() && github.event.repository.private && github.ref_name == github.event.repository.default_branch && (contains(needs.*.result, 'failure') || inputs.diagnose_run_id != '') }}
+    if: ${{ !cancelled() && github.ref_name == github.event.repository.default_branch && (contains(needs.*.result, 'failure') || inputs.diagnose_run_id != '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true

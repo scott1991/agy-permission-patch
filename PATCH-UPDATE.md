@@ -26,13 +26,13 @@ The patch generator writes a copy in the working directory. It leaves upstream u
 
 ## GitHub Actions
 
-The [agy update workflow](.github/workflows/agy-update.yml) runs on the default branch of private repositories. It checks the official macOS ARM64 manifest daily at about 11:17 a.m. Taiwan time. To run it manually, select **Actions → agy update (macOS ARM64) → Run workflow**.
+The [agy update workflow](.github/workflows/agy-update.yml) runs on the default branch of the repository. It checks the official macOS ARM64 manifest daily at about 11:17 a.m. Taiwan time. To run it manually, select **Actions → agy update (macOS ARM64) → Run workflow**.
 
 This project's patch tooling and releases support Apple Silicon (ARM64). Google also distributes a separate macOS Intel (x86_64) build. [Official Intel build manifest](https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/darwin_amd64.json)
 
 1. The workflow stops after the check if a release already has the same version and upstream archive SHA-512 prefix. A different upstream build with the same version gets a different tag.
 2. For a new build, an Apple Silicon runner runs the offline tests, downloads and verifies the upstream archive, builds the patch with `build-candidate`, and verifies the ad hoc signature. If the deterministic locator stops on a changed semantic pattern, the job asks opencode to propose a recipe from the saved analysis artifacts, then runs `build-candidate --recipe` to validate it with the strict semantic checks and the patcher. A proposal that fails validation stops the job. Only verified builds are published.
-3. The private repository's Releases page provides `agy-darwin-arm64.tar.gz`, `SHA256SUMS`, `recipe.verified.json`, `review.md`, and `manifest.json`. Run `shasum -a 256 -c SHA256SUMS` after downloading to verify the files. The manifest records `static-only` validation. Section 4 describes how to test behavior on a local machine where you are signed in.
+3. The Releases page provides `agy-darwin-arm64.tar.gz`, `SHA256SUMS`, `recipe.verified.json`, `review.md`, and `manifest.json`. Run `shasum -a 256 -c SHA256SUMS` after downloading to verify the files. The manifest records `static-only` validation. Section 4 describes how to test behavior on a local machine where you are signed in.
 
 If a job fails, the diagnose job automatically asks the opencode CLI with the free `opencode/deepseek-v4.1-flash-free` model to summarize job and step statuses in the run summary. The `candidate_failure` output distinguishes `strict_pattern`, `llm_recipe_rejected`, `llm_no_proposal`, and `other`. Edit the [diagnostic prompt](.github/ci/agy-ci-failure.prompt.md) to change what it reports. No credential is needed: opencode uses a public key for `*-free` models, and the step runs with `GITHUB_TOKEN` and `OPENCODE_CONSOLE_TOKEN` unset. The summary step is best effort (`continue-on-error`); the workflow still fails, and release decisions come from the existing validation jobs. [opencode](https://opencode.ai)
 
